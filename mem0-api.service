@@ -1,0 +1,19 @@
+[Unit]
+Description=mem0 injection proxy
+After=network.target qdrant.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt
+ExecStart=/usr/bin/python3 /opt/mem0_proxy.py
+Restart=on-failure
+RestartSec=5
+Environment=MEM0_PROXY_HOST=0.0.0.0
+Environment=MEM0_PROXY_PORT=8765
+Environment=MEM0_CONFIG_PATH=/root/.mem0/config.json
+Environment=MEM0_PROXY_LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

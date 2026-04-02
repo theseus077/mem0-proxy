@@ -1,0 +1,22 @@
+{
+	"nodes":[
+		{"id":"317513aea76da4ec","type":"text","text":"User / OpenCode\nSendet Request mit Tools/JSON","x":-140,"y":-600,"width":320,"height":80},
+		{"id":"f4dc3be755fe42f2","type":"text","text":"mem0 Proxy:\n1. JSON Filter Layer","x":-140,"y":-480,"width":320,"height":80},
+		{"id":"1377b1c95ce5aab9","type":"text","text":"mem0 Proxy:\nDurchsuche Memory nach relevanten Context","x":-140,"y":-380,"width":320,"height":80},
+		{"id":"b1a614fb54433b14","type":"text","text":"mem0 Proxy:\nBaue Context für Ollama Cloud LLM (gefiltert)","x":-140,"y":-280,"width":320,"height":80},
+		{"id":"02823ffe5d6f13c1","type":"text","text":"Ollama Cloud LLM\nVerarbeitet Request mit Memory Context","x":-140,"y":-120,"width":320,"height":80},
+		{"id":"b83be2603b54c43a","type":"text","text":"mem0 Proxy:\n4. Response Filter Layer\n- Extrahiere NUR Content\n- Reasoning EXCLUDED ✗","x":260,"y":-200,"width":320,"height":140},
+		{"id":"7c00ffeefd1b3dc2","type":"text","text":"mem0 Proxy:\n5. Async Memory Store\n- Speichere NUR Content\n- KEIN Reasoning\n- Non-blocking ✓","x":260,"y":-400,"width":320,"height":160},
+		{"id":"acc914b3656ebf2a","type":"text","text":"User / OpenCode\nErhält SOFORT Response\n(mit Reasoning)","x":260,"y":-600,"width":320,"height":80}
+	],
+	"edges":[
+		{"id":"14b0c6d3f5b97919","fromNode":"317513aea76da4ec","fromSide":"bottom","toNode":"f4dc3be755fe42f2","toSide":"top","label":"Request mit Tools/JSON"},
+		{"id":"edge_filter","fromNode":"f4dc3be755fe42f2","fromSide":"bottom","toNode":"1377b1c95ce5aab9","toSide":"top","label":"Gefilterte Messages"},
+		{"id":"edge_memory_search","fromNode":"1377b1c95ce5aab9","fromSide":"bottom","toNode":"b1a614fb54433b14","toSide":"top","label":"Memory Context"},
+		{"id":"edge_llm","fromNode":"b1a614fb54433b14","fromSide":"bottom","toNode":"02823ffe5d6f13c1","toSide":"top","label":"Request an LLM"},
+		{"id":"edge_response","fromNode":"02823ffe5d6f13c1","fromSide":"right","toNode":"b83be2603b54c43a","toSide":"bottom","label":"Response"},
+		{"id":"edge_user","fromNode":"b83be2603b54c43a","fromSide":"right","toNode":"acc914b3656ebf2a","toSide":"right","label":"SOFORT Response"},
+		{"id":"edge_memory","fromNode":"b83be2603b54c43a","fromSide":"top","toNode":"7c00ffeefd1b3dc2","toSide":"bottom","label":"Content ONLY"},
+		{"id":"bfe9078a6b087d17","fromNode":"acc914b3656ebf2a","fromSide":"left","toNode":"317513aea76da4ec","toSide":"right"}
+	]
+}
