@@ -40,8 +40,8 @@ An OpenAI-compatible API proxy that injects relevant mem0 context into prompts a
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/your-org/mem0-inject-proxy.git
-cd mem0-inject-proxy
+git clone https://github.com/theseus077/mem0-proxy.git
+cd mem0-proxy
 ```
 
 ### 2. Install Dependencies
@@ -206,6 +206,69 @@ Add to `~/.config/opencode/config.json`:
 | `MEM0_PROXY_UPSTREAM_API_KEY` | (from config) | Upstream API key |
 | `MEM0_PROXY_DEFAULT_MODEL` | (from config) | Default model name |
 
+## Qdrant Optimization
+
+This proxy includes optimized Qdrant configuration for better performance and memory efficiency.
+
+### Features
+
+- **INT8 Scalar Quantization** - Reduces memory usage by ~75%
+- **Optimized HNSW Parameters** - Faster vector search
+- **Instance-wide Defaults** - Consistent configuration for all collections
+- **Automated Setup** - Collection optimization script included
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `qdrant-config.yaml` | Instance-wide Qdrant defaults |
+| `qdrant.service` | Systemd service with config path |
+| `setup-qdrant-collection.sh` | Collection optimization script |
+
+### Quick Setup
+
+1. **Install Qdrant config:**
+   ```bash
+   sudo mkdir -p /etc/qdrant
+   sudo cp qdrant-config.yaml /etc/qdrant/config.yaml
+   sudo chown qdrant:qdrant /etc/qdrant/config.yaml
+   ```
+
+2. **Update systemd service:**
+   ```bash
+   sudo cp qdrant.service /etc/systemd/system/qdrant.service
+   sudo systemctl daemon-reload
+   sudo systemctl restart qdrant
+   ```
+
+3. **Optimize collection:**
+   ```bash
+   chmod +x setup-qdrant-collection.sh
+   ./setup-qdrant-collection.sh
+   ```
+
+### Performance Improvements
+
+| Setting | Default | Optimized | Benefit |
+|---------|---------|-----------|---------|
+| Quantization | None | INT8 Scalar | 75% memory reduction |
+| `full_scan_threshold` | 10 KB | 1 MB | Fewer unnecessary index scans |
+| `indexing_threshold` | 20 KB | 100 KB | Better segment management |
+
+### Verification
+
+```bash
+# Check Qdrant config is loaded
+systemctl status qdrant
+# Should show: --config-path /etc/qdrant/config.yaml
+
+# Verify collection config
+curl http://localhost:6333/collections/mem0 | jq '.result.config.quantization_config'
+# Expected: { "scalar": { "type": "int8", ... } }
+```
+
+For detailed optimization documentation, see `docs/qdrant-optimization.md`.
+
 ## Services
 
 ### Dependencies
@@ -226,6 +289,7 @@ journalctl -u qdrant -f
 
 # Restart
 systemctl restart mem0-api
+systemctl restart qdrant
 ```
 
 ### Health Check Response

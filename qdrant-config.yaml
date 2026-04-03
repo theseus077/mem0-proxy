@@ -1,0 +1,68 @@
+log_level: INFO
+
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  enable_cors: true
+
+storage:
+  storage_path: /var/lib/qdrant/storage
+  snapshots_path: /var/lib/qdrant/snapshots
+  on_disk_payload: true
+  
+  # Write-Ahead-Log configuration
+  wal:
+    wal_capacity_mb: 32
+    wal_segments_ahead: 0
+  
+  # Performance settings
+  performance:
+    max_search_threads: 0  # Auto
+    optimizer_cpu_budget: 0  # Auto
+  
+  # HNSW Index Defaults (applies to ALL new collections)
+  hnsw_index:
+    m: 16
+    ef_construct: 100
+    full_scan_threshold_kb: 1000  # 1000 KB = ~1 MB
+    max_indexing_threads: 0  # Auto
+    on_disk: false
+  
+  # Optimizer Defaults
+  optimizers:
+    deleted_threshold: 0.2
+    vacuum_min_vector_number: 1000
+    default_segment_number: 0  # Auto
+    max_segment_size_kb: null  # Auto
+    memmap_threshold_kb: null  # Auto
+    indexing_threshold_kb: 100  # Index when segment reaches 100KB
+    flush_interval_sec: 5
+    max_optimization_threads: null  # Auto
+  
+  # Optimizer Override (can override collection-level settings)
+  # optimizers_overwrite:
+  #   deleted_threshold: 0.2
+  #   vacuum_min_vector_number: 1000
+  #   indexing_threshold_kb: 100
+  
+  # Collection Defaults
+  collection:
+    replication_factor: 1
+    write_consistency_factor: 1
+    shard_number_per_node: 1
+    # quantization: null  # Must be set at collection creation
+  
+  # Maximum number of collections allowed
+  max_collections: null  # No limit
+
+# Cluster mode disabled for single node
+cluster:
+  enabled: false
+
+# Disable telemetry reporting
+telemetry_disabled: true
+
+# TLS disabled (for internal network)
+tls:
+  enabled: false
