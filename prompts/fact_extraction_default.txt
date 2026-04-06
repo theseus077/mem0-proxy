@@ -1,0 +1,20 @@
+Memory Quality Filter
+
+STORE:
+- Confirmed facts with specific details (who, what, when, where)
+- User preferences and settings
+- Technical configurations with versions
+- Architecture decisions with rationale
+
+IGNORE:
+- Speculation (might, maybe, possibly, I think, could be)
+- Temporary context (current time, session info)
+- Vague statements (something, someone, somehow)
+- Debug output, error messages
+- Code without explanation
+- Personal identifiers (SSN, passwords, keys)
+
+QUALITY:
+- Require specific details for facts
+- Require high confidence
+- Avoid duplicates

@@ -93,6 +93,34 @@ sudo systemctl enable mem0-api
 sudo systemctl start mem0-api
 ```
 
+### 5. Configure Memory Quality Control (Optional but Recommended)
+
+For production use, configure custom prompts for memory quality filtering:
+
+```bash
+# Create prompts directory
+sudo mkdir -p /etc/mem0
+
+# Copy default prompts
+sudo cp prompts/fact_extraction_default.txt /etc/mem0/fact_extraction.txt
+sudo cp prompts/update_memory_default.txt /etc/mem0/update_memory.txt
+
+# Edit prompts to customize for your use case
+sudo nano /etc/mem0/fact_extraction.txt
+
+# Enable custom prompts in systemd service
+sudo nano /etc/systemd/system/mem0-api.service
+# Uncomment the Environment lines for custom prompts:
+# Environment=MEM0_PROXY_FACT_EXTRACTION_PROMPT=/etc/mem0/fact_extraction.txt
+# Environment=MEM0_PROXY_UPDATE_MEMORY_PROMPT=/etc/mem0/update_memory.txt
+
+# Restart service
+sudo systemctl daemon-reload
+sudo systemctl restart mem0-api
+```
+
+Alternatively, add custom prompts directly to your config.json (see `config.example.json`).
+
 ## Usage
 
 ### Start Server
@@ -205,6 +233,136 @@ Add to `~/.config/opencode/config.json`:
 | `MEM0_PROXY_UPSTREAM_URL` | (from config) | Upstream API URL |
 | `MEM0_PROXY_UPSTREAM_API_KEY` | (from config) | Upstream API key |
 | `MEM0_PROXY_DEFAULT_MODEL` | (from config) | Default model name |
+| `MEM0_PROXY_FACT_EXTRACTION_PROMPT` | (none) | Path to custom fact extraction prompt file |
+| `MEM0_PROXY_UPDATE_MEMORY_PROMPT` | (none) | Path to custom memory update prompt file |
+
+## Memory Quality Control
+
+### Custom Instructions for Controlled Ingestion
+
+mem0-proxy supports custom instructions to control what gets stored in memory. This prevents:
+
+- ❌ Speculation being stored as facts
+- ❌ Low-confidence data polluting your vector store
+- ❌ Duplicate or redundant memories
+- ❌ Temporary context being persisted
+
+### How It Works
+
+The proxy uses two custom prompts:
+
+1. **Fact Extraction Prompt** - Controls what information is extracted from conversations
+2. **Memory Update Prompt** - Controls how memories are updated and merged
+
+These prompts are applied automatically when storing memories, ensuring high-quality, verified facts only.
+
+### Configuration Options
+
+#### Option 1: Default Quality Filters (Recommended)
+
+The proxy automatically applies sensible default quality filters if no custom prompts are configured. These filters:
+
+- Reject speculation and uncertainty
+- Require specificity (who/what/when/where)
+- Prevent duplicates
+- Store only high-confidence facts
+
+Just start the proxy - defaults are applied automatically.
+
+#### Option 2: Custom Prompts in config.json
+
+Add prompts directly to your `/root/.mem0/config.json`:
+
+```json
+{
+  "llm": { ... },
+  "embedder": { ... },
+  "vector_store": { ... },
+  "custom_fact_extraction_prompt": "Memory rules:\n\nSTORE ONLY:\n- Confirmed user preferences\n- Technical details with specifics\n\nNEVER STORE:\n- Speculation (might, maybe)\n- Vague statements",
+  "custom_update_memory_prompt": "Update rules:\n\nUPDATE if: More specific details available\nADD if: New topic\nDELETE if: Outdated"
+}
+```
+
+#### Option 3: Separate Prompt Files (Recommended for Production)
+
+Use environment variables to specify prompt files:
+
+```bash
+# Set environment variables
+export MEM0_PROXY_FACT_EXTRACTION_PROMPT=/etc/mem0/fact_extraction.txt
+export MEM0_PROXY_UPDATE_MEMORY_PROMPT=/etc/mem0/update_memory.txt
+
+# Create prompt files
+mkdir -p /etc/mem0
+cp prompts/fact_extraction_default.txt /etc/mem0/fact_extraction.txt
+cp prompts/update_memory_default.txt /etc/mem0/update_memory.txt
+```
+
+### Example Use Cases
+
+#### Medical Assistant (High-Stakes)
+
+```json
+"custom_fact_extraction_prompt": "Medical memory rules:\n\nSTORE:\n- Confirmed diagnoses (with doctor name and date)\n- Verified allergies (with reaction type)\n- Current medications (with dosage)\n\nNEVER STORE:\n- Speculation (might, maybe, possibly)\n- Unverified symptoms\n- PII (SSN, insurance numbers)\n\nCONFIDENCE: Require 80%+ confidence, verify details"
+```
+
+#### Code Assistant (Technical Focus)
+
+```json
+"custom_fact_extraction_prompt": "Code assistant memory rules:\n\nSTORE:\n- User preferences (editor, language, frameworks)\n- Project configurations (with versions)\n- Architecture decisions (with rationale)\n- Patterns and conventions\n\nIGNORE:\n- Temporary errors or warnings\n- Debug output\n- Speculative suggestions\n- Code without explanatory context"
+```
+
+### Testing Quality Filters
+
+Run the included test script to verify your custom instructions:
+
+```bash
+# Start proxy (in background or separate terminal)
+python mem0_proxy.py
+
+# Run tests
+python scripts/test_memory_quality.py
+```
+
+Expected output:
+```
+================================================================================
+Testing Memory Quality Filter
+================================================================================
+
+Scenario: Speculation - Should be REJECTED
+Message: I think maybe the API might be slow...
+  ✗ Filtered (as expected)
+
+Scenario: Specific Technical Detail - Should be STORED
+Message: The API handles 1000 requests per minute...
+  ✓ Stored: API handles 1000 requests per minute
+
+...
+
+✓ Quality filter is working - more items rejected than stored
+✓ Test PASSED
+```
+
+### Verification in Logs
+
+Check that custom prompts are loaded:
+
+```bash
+journalctl -u mem0-api -f | grep "custom"
+# Should see:
+# "Loaded custom prompt from /etc/mem0/fact_extraction.txt (1234 chars)"
+# "mem0 initialized successfully with custom instructions"
+```
+
+### Prompt Files
+
+Example prompt files are provided in the `prompts/` directory:
+
+- `prompts/fact_extraction_default.txt` - Default quality filter
+- `prompts/update_memory_default.txt` - Default update filter
+
+These are used automatically if no custom prompts are configured.
 
 ## Qdrant Optimization
 

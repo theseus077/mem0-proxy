@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -46,6 +47,8 @@ MAX_MEMORY_CONTEXT_CHARS = int(
 )
 MAX_MEMORY_QUERY_CHARS = int(os.getenv("MEM0_PROXY_MAX_MEMORY_QUERY_CHARS", "4000"))
 PROXY_API_KEY = os.getenv("MEM0_PROXY_API_KEY")
+CUSTOM_FACT_PROMPT_PATH = os.getenv("MEM0_PROXY_FACT_EXTRACTION_PROMPT")
+CUSTOM_UPDATE_PROMPT_PATH = os.getenv("MEM0_PROXY_UPDATE_MEMORY_PROMPT")
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -57,6 +60,66 @@ def load_config(path: str) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Could not read config file %s: %s", path, exc)
     return {}
+
+
+def load_custom_prompt(path: str) -> str | None:
+    """Load custom prompt from file if path is provided."""
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            logger.info("Loaded custom prompt from %s (%d chars)", path, len(content))
+            return content
+    except Exception as exc:
+        logger.warning("Could not load custom prompt from %s: %s", path, exc)
+        return None
+
+
+def get_default_quality_filter() -> str:
+    """Default quality filter for fact extraction."""
+    return """Memory Quality Filter
+
+STORE:
+- Confirmed facts with specific details (who, what, when, where)
+- User preferences and settings
+- Technical configurations with versions
+- Architecture decisions with rationale
+
+IGNORE:
+- Speculation (might, maybe, possibly, I think, could be)
+- Temporary context (current time, session info)
+- Vague statements (something, someone, somehow)
+- Debug output, error messages
+- Code without explanation
+- Personal identifiers (SSN, passwords, keys)
+
+QUALITY:
+- Require specific details for facts
+- Require high confidence
+- Avoid duplicates"""
+
+
+def get_default_update_filter() -> str:
+    """Default filter for memory updates."""
+    return """Memory Update Rules
+
+UPDATE if:
+- New information is more specific or accurate
+- Information has changed or been superseded
+- Contradicts existing fact with better evidence
+
+ADD if:
+- Completely new information
+- Complementary fact about different topic
+
+DELETE if:
+- Duplicate of existing memory
+- Information is outdated or irrelevant
+
+PRESERVE:
+- Audit trail (created_at, updated_at)
+- Metadata"""
 
 
 CONFIG = load_config(CONFIG_PATH)
@@ -77,15 +140,66 @@ def create_memory() -> Any | None:
         return None
 
     try:
-        instance = Memory.from_config(CONFIG) if CONFIG else Memory()
-        logger.info("mem0 initialized successfully")
+        config = dict(CONFIG) if CONFIG else {}
+        
+        # Custom Fact Extraction Prompt
+        fact_prompt_from_file = load_custom_prompt(CUSTOM_FACT_PROMPT_PATH)
+        if fact_prompt_from_file:
+            config["custom_fact_extraction_prompt"] = fact_prompt_from_file
+        elif "custom_fact_extraction_prompt" not in config:
+            # Use default quality filter
+            config["custom_fact_extraction_prompt"] = get_default_quality_filter()
+        
+        # Custom Update Memory Prompt
+        update_prompt_from_file = load_custom_prompt(CUSTOM_UPDATE_PROMPT_PATH)
+        if update_prompt_from_file:
+            config["custom_update_memory_prompt"] = update_prompt_from_file
+        elif "custom_update_memory_prompt" not in config:
+            # Use default update filter
+            config["custom_update_memory_prompt"] = get_default_update_filter()
+        
+        instance = Memory.from_config(config) if config else Memory()
+        logger.info("mem0 initialized successfully with custom instructions")
         return instance
     except Exception as exc:
         logger.exception("Failed to initialize mem0: %s", exc)
         return None
 
 
-memory = create_memory()
+memory: Any = None
+memory_init_error: str | None = None
+
+def create_memory() -> tuple[Any, str | None]:
+    if Memory is None:
+        return None, "mem0 package not installed"
+
+    try:
+        config = dict(CONFIG) if CONFIG else {}
+
+        fact_prompt_from_file = load_custom_prompt(CUSTOM_FACT_PROMPT_PATH)
+        if fact_prompt_from_file:
+            config["custom_fact_extraction_prompt"] = fact_prompt_from_file
+        elif "custom_fact_extraction_prompt" not in config:
+            config["custom_fact_extraction_prompt"] = get_default_quality_filter()
+
+        update_prompt_from_file = load_custom_prompt(CUSTOM_UPDATE_PROMPT_PATH)
+        if update_prompt_from_file:
+            config["custom_update_memory_prompt"] = update_prompt_from_file
+        elif "custom_update_memory_prompt" not in config:
+            config["custom_update_memory_prompt"] = get_default_update_filter()
+
+        instance = Memory.from_config(config) if config else Memory()
+        return instance, None
+    except Exception as exc:
+        logger.exception("Failed to initialize mem0: %s", exc)
+        return None, str(exc)
+
+
+memory, memory_init_error = create_memory()
+if memory is not None:
+    logger.info("mem0 initialized successfully with custom instructions")
+elif memory_init_error:
+    logger.warning("mem0 initialization failed: %s", memory_init_error)
 http_client: httpx.AsyncClient | None = None
 
 
@@ -120,13 +234,27 @@ def require_proxy_api_key(request: Request) -> None:
     if not PROXY_API_KEY:
         return
 
-    bearer = request.headers.get("authorization", "")
     supplied = request.headers.get("x-api-key")
+    bearer = request.headers.get("authorization", "")
 
-    if supplied == PROXY_API_KEY or bearer == f"Bearer {PROXY_API_KEY}":
+    if supplied and secrets.compare_digest(supplied, PROXY_API_KEY):
         return
 
+    if bearer.startswith("Bearer "):
+        provided_key = bearer[7:]
+        if secrets.compare_digest(provided_key, PROXY_API_KEY):
+            return
+
     raise HTTPException(status_code=401, detail="Invalid proxy API key")
+
+
+def _mask_api_key(key: str | None) -> str:
+    """Mask API key for safe logging."""
+    if not key:
+        return "<none>"
+    if len(key) < 8:
+        return "***"
+    return f"{key[:4]}...{key[-4:]}"
 
 
 def get_runtime_client() -> httpx.AsyncClient:
@@ -287,9 +415,10 @@ def build_memory_message(memories: list[str]) -> dict[str, str] | None:
 
 
 def inject_memory_message(messages: list[Any], memory_message: dict[str, str] | None) -> list[Any]:
-    copied_messages: list[Any] = [dict(message) if isinstance(message, dict) else message for message in messages]
     if memory_message is None:
-        return copied_messages
+        return messages
+
+    copied_messages: list[Any] = [dict(message) if isinstance(message, dict) else message for message in messages]
 
     insert_at = 0
     while insert_at < len(copied_messages):
@@ -319,18 +448,36 @@ def extract_assistant_content(payload: dict[str, Any]) -> str:
     return ""
 
 
-async def add_memory_async(messages: list[Any], assistant_content: str, user_id: str) -> None:
+async def add_memory_async(
+    messages: list[Any],
+    assistant_content: str,
+    user_id: str,
+    max_retries: int = 3
+) -> bool:
     if not memory or not assistant_content.strip():
-        return
+        return False
 
     conversation = text_messages_for_memory(messages)
     conversation.append({"role": "assistant", "content": assistant_content.strip()})
 
-    try:
-        await asyncio.to_thread(memory.add, conversation, user_id=user_id)
-        logger.info("Stored memory for user %s", user_id)
-    except Exception as exc:
-        logger.warning("Memory add failed for user %s: %s", user_id, exc)
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            await asyncio.to_thread(memory.add, conversation, user_id=user_id)
+            logger.info("Stored memory for user %s", user_id)
+            return True
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_retries - 1:
+                logger.warning(
+                    "Memory add failed for user %s (attempt %d/%d): %s",
+                    user_id, attempt + 1, max_retries, exc
+                )
+                await asyncio.sleep(0.1 * (attempt + 1))
+            else:
+                logger.error("Memory add failed permanently for user %s: %s", user_id, exc)
+
+    return False
 
 
 def build_upstream_headers(request: Request) -> dict[str, str]:
@@ -405,8 +552,9 @@ async def proxy_models(request: Request) -> Response:
 @app.get("/v1/health")
 async def health() -> dict[str, Any]:
     return {
-        "status": "healthy",
+        "status": "degraded" if memory is None else "healthy",
         "memory_enabled": memory is not None,
+        "memory_init_error": memory_init_error,
         "upstream_base_url": UPSTREAM_BASE_URL,
         "default_model": DEFAULT_MODEL,
         "timestamp": int(time.time()),

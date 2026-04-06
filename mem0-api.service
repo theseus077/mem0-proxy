@@ -1,5 +1,5 @@
 [Unit]
-Description=mem0 injection proxy
+Description=mem0 injection proxy with quality filtering
 After=network.target qdrant.service
 Wants=network.target
 
@@ -14,6 +14,9 @@ Environment=MEM0_PROXY_HOST=0.0.0.0
 Environment=MEM0_PROXY_PORT=8765
 Environment=MEM0_CONFIG_PATH=/root/.mem0/config.json
 Environment=MEM0_PROXY_LOG_LEVEL=INFO
+# Optional: Custom quality filter prompts (uncomment to use)
+# Environment=MEM0_PROXY_FACT_EXTRACTION_PROMPT=/etc/mem0/fact_extraction.txt
+# Environment=MEM0_PROXY_UPDATE_MEMORY_PROMPT=/etc/mem0/update_memory.txt
 
 [Install]
 WantedBy=multi-user.target

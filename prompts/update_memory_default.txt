@@ -1,0 +1,18 @@
+Memory Update Rules
+
+UPDATE if:
+- New information is more specific or accurate
+- Information has changed or been superseded
+- Contradicts existing fact with better evidence
+
+ADD if:
+- Completely new information
+- Complementary fact about different topic
+
+DELETE if:
+- Duplicate of existing memory
+- Information is outdated or irrelevant
+
+PRESERVE:
+- Audit trail (created_at, updated_at)
+- Metadata
