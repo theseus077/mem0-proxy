@@ -124,6 +124,7 @@ PRESERVE:
 
 CONFIG = load_config(CONFIG_PATH)
 LLM_CONFIG = CONFIG.get("llm", {}).get("config", {}) if isinstance(CONFIG, dict) else {}
+LLM_PROVIDER = CONFIG.get("llm", {}).get("provider", "openai").lower() if isinstance(CONFIG, dict) else "openai"
 
 UPSTREAM_BASE_URL = (
     os.getenv("MEM0_PROXY_UPSTREAM_URL")
@@ -175,6 +176,20 @@ def create_memory() -> tuple[Any, str | None]:
 
     try:
         config = dict(CONFIG) if CONFIG else {}
+
+        # If provider is ollama, we need to adapt the config for the mem0 library
+        # mem0's OllamaConfig expects 'ollama_base_url', not 'openai_base_url'
+        provider = config.get("llm", {}).get("provider", "openai").lower()
+        if provider == "ollama":
+            llm_cfg = config.get("llm", {})
+            if isinstance(llm_cfg, dict) and "config" in llm_cfg:
+                inner_cfg = llm_cfg["config"]
+                if isinstance(inner_cfg, dict) and "openai_base_url" in inner_cfg:
+                    url = inner_cfg.pop("openai_base_url")
+                    # Native Ollama API usually doesn't want /v1 at the end
+                    clean_url = url[:-3] if url.endswith("/v1") else url
+                    inner_cfg["ollama_base_url"] = clean_url
+                    logger.info("Adapted config: mapped openai_base_url -> ollama_base_url (%s)", clean_url)
 
         fact_prompt_from_file = load_custom_prompt(CUSTOM_FACT_PROMPT_PATH)
         if fact_prompt_from_file:
@@ -532,14 +547,58 @@ def parse_json_sse_line(line: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _transform_ollama_models(data: Any) -> dict[str, Any]:
+    """Transform Ollama /api/tags response to OpenAI /v1/models format."""
+    # Ollama returns a dict with a "models" key, or sometimes a list directly
+    ollama_models = []
+    if isinstance(data, dict):
+        ollama_models = data.get("models", [])
+    elif isinstance(data, list):
+        ollama_models = data
+
+    objects = []
+    for m in ollama_models:
+        if isinstance(m, dict):
+            name = m.get("name", "unknown")
+            objects.append({
+                "id": name,
+                "object": "model",
+                "created": 0,
+                "owned_by": "ollama",
+            })
+        else:
+            objects.append({"id": str(m), "object": "model", "created": 0, "owned_by": "ollama"})
+
+    return {"objects": objects}
+
+
 async def proxy_models(request: Request) -> Response:
     require_proxy_api_key(request)
     client = get_runtime_client()
 
+    # Handle Ollama provider specific endpoint and transformation
+    if LLM_PROVIDER == "ollama":
+        # Ollama /api/tags is on the root, not under /v1
+        # Remove /v1 from the end of UPSTREAM_BASE_URL if present
+        base_url = UPSTREAM_BASE_URL
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
+        url = f"{base_url}/api/tags"
+    else:
+        url = f"{UPSTREAM_BASE_URL}/models"
+
     upstream = await client.get(
-        f"{UPSTREAM_BASE_URL}/models",
+        url,
         headers=build_upstream_headers(request),
     )
+
+    if LLM_PROVIDER == "ollama" and upstream.status_code == 200:
+        try:
+            data = upstream.json()
+            return JSONResponse(content=_transform_ollama_models(data))
+        except Exception as exc:
+            logger.warning("Failed to transform Ollama models: %s", exc)
+
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
