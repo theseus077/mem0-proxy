@@ -462,11 +462,14 @@ async def chat_completions(request: Request) -> Response:
     if not isinstance(messages, list) or not messages:
         raise HTTPException(status_code=400, detail="messages must be a non-empty array")
 
+    t_start = time.time()
+
     user_id = extract_user_id(request, payload)
     memory_limit = get_memory_limit(payload)
     search_query = extract_search_query(messages)
     memories = await search_memory(search_query, user_id, memory_limit)
     memory_message = build_memory_message(memories)
+    t_search = time.time()
 
     upstream_payload = dict(payload)
     upstream_payload["messages"] = inject_memory_message(messages, memory_message)
@@ -503,6 +506,13 @@ async def chat_completions(request: Request) -> Response:
                 headers=proxy_response_headers(upstream_response.headers, streaming=False),
             )
 
+        t_chat = time.time()
+        timing_headers = {
+            "X-Timing-Search": f"{t_search - t_start:.3f}",
+            "X-Timing-Chat": f"{t_chat - t_search:.3f}",
+            "X-Timing-Total-So-Far": f"{t_chat - t_start:.3f}",
+        }
+
         async def stream_body() -> AsyncIterator[bytes]:
             assistant_parts: list[str] = []
             try:
@@ -519,10 +529,12 @@ async def chat_completions(request: Request) -> Response:
                 if assistant_content:
                     asyncio.create_task(add_memory_async(messages, assistant_content, user_id))
 
+        resp_headers = proxy_response_headers(upstream_response.headers, streaming=True)
+        resp_headers.update(timing_headers)
         return StreamingResponse(
             stream_body(),
             status_code=upstream_response.status_code,
-            headers=proxy_response_headers(upstream_response.headers, streaming=True),
+            headers=resp_headers,
         )
 
     upstream_response = await client.post(
@@ -530,6 +542,7 @@ async def chat_completions(request: Request) -> Response:
         headers=headers,
         json=upstream_payload,
     )
+    t_chat = time.time()
 
     if upstream_response.status_code >= 400:
         return Response(
@@ -550,13 +563,20 @@ async def chat_completions(request: Request) -> Response:
         )
 
     assistant_content = extract_assistant_content(response_payload)
+    t_add_schedule = time.time()
     if assistant_content:
         asyncio.create_task(add_memory_async(messages, assistant_content, user_id))
+
+    resp_headers = proxy_response_headers(upstream_response.headers, streaming=False)
+    resp_headers["X-Timing-Search"] = f"{t_search - t_start:.3f}"
+    resp_headers["X-Timing-Chat"] = f"{t_chat - t_search:.3f}"
+    resp_headers["X-Timing-Memory-Schedule"] = f"{t_add_schedule - t_chat:.3f}"
+    resp_headers["X-Timing-Total"] = f"{t_add_schedule - t_start:.3f}"
 
     return JSONResponse(
         content=response_payload,
         status_code=upstream_response.status_code,
-        headers=proxy_response_headers(upstream_response.headers, streaming=False),
+        headers=resp_headers,
     )
 
 
