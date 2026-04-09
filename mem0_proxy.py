@@ -47,8 +47,6 @@ MAX_MEMORY_CONTEXT_CHARS = int(
 )
 MAX_MEMORY_QUERY_CHARS = int(os.getenv("MEM0_PROXY_MAX_MEMORY_QUERY_CHARS", "4000"))
 PROXY_API_KEY = os.getenv("MEM0_PROXY_API_KEY")
-CUSTOM_FACT_PROMPT_PATH = os.getenv("MEM0_PROXY_FACT_EXTRACTION_PROMPT")
-CUSTOM_UPDATE_PROMPT_PATH = os.getenv("MEM0_PROXY_UPDATE_MEMORY_PROMPT")
 
 
 def load_config(path: str) -> dict[str, Any]:
@@ -62,69 +60,8 @@ def load_config(path: str) -> dict[str, Any]:
     return {}
 
 
-def load_custom_prompt(path: str) -> str | None:
-    """Load custom prompt from file if path is provided."""
-    if not path:
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            logger.info("Loaded custom prompt from %s (%d chars)", path, len(content))
-            return content
-    except Exception as exc:
-        logger.warning("Could not load custom prompt from %s: %s", path, exc)
-        return None
-
-
-def get_default_quality_filter() -> str:
-    """Default quality filter for fact extraction."""
-    return """Memory Quality Filter
-
-STORE:
-- Confirmed facts with specific details (who, what, when, where)
-- User preferences and settings
-- Technical configurations with versions
-- Architecture decisions with rationale
-
-IGNORE:
-- Speculation (might, maybe, possibly, I think, could be)
-- Temporary context (current time, session info)
-- Vague statements (something, someone, somehow)
-- Debug output, error messages
-- Code without explanation
-- Personal identifiers (SSN, passwords, keys)
-
-QUALITY:
-- Require specific details for facts
-- Require high confidence
-- Avoid duplicates"""
-
-
-def get_default_update_filter() -> str:
-    """Default filter for memory updates."""
-    return """Memory Update Rules
-
-UPDATE if:
-- New information is more specific or accurate
-- Information has changed or been superseded
-- Contradicts existing fact with better evidence
-
-ADD if:
-- Completely new information
-- Complementary fact about different topic
-
-DELETE if:
-- Duplicate of existing memory
-- Information is outdated or irrelevant
-
-PRESERVE:
-- Audit trail (created_at, updated_at)
-- Metadata"""
-
-
 CONFIG = load_config(CONFIG_PATH)
 LLM_CONFIG = CONFIG.get("llm", {}).get("config", {}) if isinstance(CONFIG, dict) else {}
-LLM_PROVIDER = CONFIG.get("llm", {}).get("provider", "openai").lower() if isinstance(CONFIG, dict) else "openai"
 
 UPSTREAM_BASE_URL = (
     os.getenv("MEM0_PROXY_UPSTREAM_URL")
@@ -135,75 +72,12 @@ UPSTREAM_API_KEY = os.getenv("MEM0_PROXY_UPSTREAM_API_KEY") or LLM_CONFIG.get("a
 DEFAULT_MODEL = os.getenv("MEM0_PROXY_DEFAULT_MODEL") or LLM_CONFIG.get("model")
 
 
-def create_memory() -> Any | None:
-    if Memory is None:
-        logger.warning("mem0 is not installed. Memory features are disabled.")
-        return None
-
-    try:
-        config = dict(CONFIG) if CONFIG else {}
-        
-        # Custom Fact Extraction Prompt
-        fact_prompt_from_file = load_custom_prompt(CUSTOM_FACT_PROMPT_PATH)
-        if fact_prompt_from_file:
-            config["custom_fact_extraction_prompt"] = fact_prompt_from_file
-        elif "custom_fact_extraction_prompt" not in config:
-            # Use default quality filter
-            config["custom_fact_extraction_prompt"] = get_default_quality_filter()
-        
-        # Custom Update Memory Prompt
-        update_prompt_from_file = load_custom_prompt(CUSTOM_UPDATE_PROMPT_PATH)
-        if update_prompt_from_file:
-            config["custom_update_memory_prompt"] = update_prompt_from_file
-        elif "custom_update_memory_prompt" not in config:
-            # Use default update filter
-            config["custom_update_memory_prompt"] = get_default_update_filter()
-        
-        instance = Memory.from_config(config) if config else Memory()
-        logger.info("mem0 initialized successfully with custom instructions")
-        return instance
-    except Exception as exc:
-        logger.exception("Failed to initialize mem0: %s", exc)
-        return None
-
-
-memory: Any = None
-memory_init_error: str | None = None
-
 def create_memory() -> tuple[Any, str | None]:
     if Memory is None:
         return None, "mem0 package not installed"
 
     try:
-        config = dict(CONFIG) if CONFIG else {}
-
-        # If provider is ollama, we need to adapt the config for the mem0 library
-        # mem0's OllamaConfig expects 'ollama_base_url', not 'openai_base_url'
-        provider = config.get("llm", {}).get("provider", "openai").lower()
-        if provider == "ollama":
-            llm_cfg = config.get("llm", {})
-            if isinstance(llm_cfg, dict) and "config" in llm_cfg:
-                inner_cfg = llm_cfg["config"]
-                if isinstance(inner_cfg, dict) and "openai_base_url" in inner_cfg:
-                    url = inner_cfg.pop("openai_base_url")
-                    # Native Ollama API usually doesn't want /v1 at the end
-                    clean_url = url[:-3] if url.endswith("/v1") else url
-                    inner_cfg["ollama_base_url"] = clean_url
-                    logger.info("Adapted config: mapped openai_base_url -> ollama_base_url (%s)", clean_url)
-
-        fact_prompt_from_file = load_custom_prompt(CUSTOM_FACT_PROMPT_PATH)
-        if fact_prompt_from_file:
-            config["custom_fact_extraction_prompt"] = fact_prompt_from_file
-        elif "custom_fact_extraction_prompt" not in config:
-            config["custom_fact_extraction_prompt"] = get_default_quality_filter()
-
-        update_prompt_from_file = load_custom_prompt(CUSTOM_UPDATE_PROMPT_PATH)
-        if update_prompt_from_file:
-            config["custom_update_memory_prompt"] = update_prompt_from_file
-        elif "custom_update_memory_prompt" not in config:
-            config["custom_update_memory_prompt"] = get_default_update_filter()
-
-        instance = Memory.from_config(config) if config else Memory()
+        instance = Memory.from_config(CONFIG) if CONFIG else Memory()
         return instance, None
     except Exception as exc:
         logger.exception("Failed to initialize mem0: %s", exc)
@@ -212,7 +86,7 @@ def create_memory() -> tuple[Any, str | None]:
 
 memory, memory_init_error = create_memory()
 if memory is not None:
-    logger.info("mem0 initialized successfully with custom instructions")
+    logger.info("mem0 initialized successfully")
 elif memory_init_error:
     logger.warning("mem0 initialization failed: %s", memory_init_error)
 http_client: httpx.AsyncClient | None = None
@@ -261,15 +135,6 @@ def require_proxy_api_key(request: Request) -> None:
             return
 
     raise HTTPException(status_code=401, detail="Invalid proxy API key")
-
-
-def _mask_api_key(key: str | None) -> str:
-    """Mask API key for safe logging."""
-    if not key:
-        return "<none>"
-    if len(key) < 8:
-        return "***"
-    return f"{key[:4]}...{key[-4:]}"
 
 
 def get_runtime_client() -> httpx.AsyncClient:
@@ -547,58 +412,14 @@ def parse_json_sse_line(line: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _transform_ollama_models(data: Any) -> dict[str, Any]:
-    """Transform Ollama /api/tags response to OpenAI /v1/models format."""
-    # Ollama returns a dict with a "models" key, or sometimes a list directly
-    ollama_models = []
-    if isinstance(data, dict):
-        ollama_models = data.get("models", [])
-    elif isinstance(data, list):
-        ollama_models = data
-
-    objects = []
-    for m in ollama_models:
-        if isinstance(m, dict):
-            name = m.get("name", "unknown")
-            objects.append({
-                "id": name,
-                "object": "model",
-                "created": 0,
-                "owned_by": "ollama",
-            })
-        else:
-            objects.append({"id": str(m), "object": "model", "created": 0, "owned_by": "ollama"})
-
-    return {"objects": objects}
-
-
 async def proxy_models(request: Request) -> Response:
     require_proxy_api_key(request)
     client = get_runtime_client()
 
-    # Handle Ollama provider specific endpoint and transformation
-    if LLM_PROVIDER == "ollama":
-        # Ollama /api/tags is on the root, not under /v1
-        # Remove /v1 from the end of UPSTREAM_BASE_URL if present
-        base_url = UPSTREAM_BASE_URL
-        if base_url.endswith("/v1"):
-            base_url = base_url[:-3]
-        url = f"{base_url}/api/tags"
-    else:
-        url = f"{UPSTREAM_BASE_URL}/models"
-
     upstream = await client.get(
-        url,
+        f"{UPSTREAM_BASE_URL}/models",
         headers=build_upstream_headers(request),
     )
-
-    if LLM_PROVIDER == "ollama" and upstream.status_code == 200:
-        try:
-            data = upstream.json()
-            return JSONResponse(content=_transform_ollama_models(data))
-        except Exception as exc:
-            logger.warning("Failed to transform Ollama models: %s", exc)
-
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
